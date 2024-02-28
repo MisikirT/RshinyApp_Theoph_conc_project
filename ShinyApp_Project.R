@@ -1,72 +1,38 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
-#
+# Install and load necessary libraries
+#install.packages(c("shiny", "tidyverse", "DT", "corrplot"))
 
-#library(shiny)
-#library(dplyr)
-#library(ggplot2)
-
-libraries <- c("tidyverse", "dplyr", "shiny", "PK","ggplot2")
-
-# Load libraries with suppression of startup messages
-for (lib in libraries) {
-  suppressPackageStartupMessages(library(lib, character.only = TRUE))
-}
-
-
+# Load libraries
+library(shiny)
+library(tidyverse)
+library(DT)
+library(corrplot)
 
 # Assume 'a_Theoph' dataframe is already available with the necessary columns
-
 data(Theoph)
-
-#To add a bit more complexity, we will introduce two hypothetical datasets:  
-
-#demog.csv: demographics dataset characterizing the subjects  
-#il13.csv: This dataset contains % inhibition of stimulated IL-13 release by PBMC at hour 0 and hour 24.  
-
-#The data will need to be wrangled into an analysis ready data frame, a_Theoph, by using dplyr functions.**  
-
-#a_Theoph will include all subjects' data in Theoph joined with demographic data (using the correct dplyr join function) from dm.csv and il13 inhibition data from il13.csv.  
-#Include only the subjects from Theoph in the resulting joined dataset.  Subjects in Theoph will be included in the analysis population.  
-#Create the data frame a_Theoph with the following columns.  Do not include any other columns in the data frame at this point.  
-# Subject: Subject ID from Theoph  
-# SEX: Sex from dm.csv  
-# Age: Age from dm.csv  
-# Dose: Dose from Theoph  
-# Time: Time from Theoph  
-# conc: conc from Theop  
-# IL13PCTI: % IL-13 inhibition from il13.csv (Note that il13.csv contains a nominal time whereas Theoph contains actual time.)  
-
-#Some basic function calls to read in the csv files are included, however, you may modify the options to the read.csv function as you see fit.  
-#For example, you may not want to have strings converted to factors by default.  
-
-#The code for generating a_Theoph will be written
-
-##input analysis data creation code here
 
 dm <- read.csv("/Users/misikirtesfaye/Downloads/Mixed_files/Misikir_Biometric_files/dm.csv")
 attach(dm)
 
-il13 <- read.csv("/Users/misikirtesfaye/Downloads/Mixed_files/Misikir_Biometric_files/il13.csv",skip = 3)
-
+il13 <- read.csv("/Users/misikirtesfaye/Downloads/Mixed_files/Misikir_Biometric_files/il13.csv", skip = 3)
 attach(il13)
 
-Theoph<-Theoph%>%mutate(Subject=as.character(Subject)) 
+Theoph <- Theoph %>% mutate(Subject = as.character(Subject))
 
-il13<-il13 %>% mutate(Subject=as.character(Subject)) 
+il13 <- il13 %>% mutate(Subject = as.character(Subject))
 
-dm<-dm %>% rename(Subject=SUBJECT) %>% mutate(Subject=as.character(Subject)) %>% 
-  mutate(SEX=ifelse(SEX=="MALE","M",SEX))
+dm <- dm %>%
+  rename(Subject = SUBJECT) %>%
+  mutate(Subject = as.character(Subject)) %>%
+  mutate(SEX = ifelse(SEX == "MALE", "M", SEX))
 
-a_Theoph<-Theoph %>% select(Subject,Dose,Time,conc) %>% left_join(dm,select(Subject,SEX,AGE),by="Subject") %>% left_join(il13,select(Subject,Hour.0,Hour.24),by="Subject") %>% 
+a_Theoph <- Theoph %>%
+  select(Subject, Dose, Time, conc) %>%
+  left_join(dm, select(Subject, SEX, Age), by = "Subject") %>%
+  left_join(il13, select(Subject, Hour.0, Hour.24), by = "Subject") %>%
   distinct()
 
-attach(a_Theoph)
+# Define UI
+# ... (previous code)
 
 # Define UI
 ui <- fluidPage(
@@ -74,16 +40,36 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      # Any inputs or widgets you may want to add
+      # Checkbox for showing all subjects
+      checkboxInput("show_all_subjects", "Show All Subjects", value = FALSE),
+      # Slider to select individual subject
+      sliderInput("subject_slider", "Select Subject",
+                  min = 1, max = n_distinct(a_Theoph$Subject), value = 1, step = 1),
+      # Button and Slider for Min/Max Concentration
+      actionButton("filter_btn", "Filter Concentration"),
+      sliderInput("conc_range", "Concentration Range",
+                  min = 0, max = 20, value = c(0, 20), step = 1)
     ),
     
     mainPanel(
+      tags$div(
+        style = "text-align: justify;",
+        "This Shiny application provides an interactive dashboard for exploring pharmacokinetic data.",
+        "Pharmacokinetics (PK) is the study of how a drug is absorbed, distributed, metabolized, and excreted in an organism.",
+        "The Area Under the Curve (AUC) is a key parameter in pharmacokinetics that represents the total exposure of a drug over time.",
+        "Use the options in the sidebar to explore concentration summaries, AUC calculations, visualizations, and more."
+      ),
       tabsetPanel(
-        tabPanel("Concentration Summary", tableOutput("conc_summary")),
-        tabPanel("AUC Calculation", verbatimTextOutput("auc_calculation")),
+        tabPanel("Concentration Summary", DTOutput("conc_summary")),
+        tabPanel("AUC Calculation", DTOutput("auc_calculation")),
         tabPanel("AUC Visualization", plotOutput("auc_visualization")),
         tabPanel("Dose Levels Comparison", plotOutput("dose_comparison")),
-        tabPanel("Additional Analysis", verbatimTextOutput("additional_analysis"))
+        tabPanel("Descriptive Statistics", DTOutput("descriptive_stats")),
+        tabPanel("Boxplot of Concentrations Over Time", plotOutput("boxplot")),
+        tabPanel("Correlation Heatmap", plotOutput("correlation_heatmap")),
+        tabPanel("Histogram of Age Distribution", plotOutput("age_histogram")),
+        tabPanel("Scatter Plot Matrix", plotOutput("scatter_plot_matrix")),
+        tabPanel("Maximum Concentration Summary", DTOutput("max_conc_summary"))
         # You can add more tabs as needed
       )
     )
@@ -92,41 +78,56 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output) {
+  # Reactive element to filter data based on selected subject or all subjects
+  selected_subject_data <- reactive({
+    if (input$show_all_subjects) {
+      a_Theoph
+    } else {
+      a_Theoph %>%
+        filter(Subject == input$subject_slider)
+    }
+  })
+  
   # Task 1: Concentration Summary
-  output$conc_summary <- renderTable({
-    Conc_summary <- a_Theoph %>% 
-      group_by(SEX) %>% 
-      summarise(Peak_conc = max(conc))
-    Conc_summary
+  output$conc_summary <- renderDT({
+    filtered_data <- selected_subject_data() %>%
+      filter(conc >= input$conc_range[1], conc <= input$conc_range[2])
+    datatable(filtered_data)
   })
   
   # Task 2: AUC Calculation (Complete the function trapezoid)
-  output$auc_calculation <- renderPrint({
+  output$auc_calculation <- renderDT({
     trapezoid <- function(indf) {
       a_theoph <- indf %>%
         group_by(Subject) %>%
         mutate(conc2 = lag(conc),
                time2 = lag(Time)) %>%
         mutate(calc_auc = ifelse(!is.na(conc) & !is.na(conc2) & !is.na(Time) & !is.na(time2),
-                                 ((conc + conc2) / 2) * (Time - time2), NA_integer_)) %>% 
+                                 ((conc + conc2) / 2) * (Time - time2), NA_integer_)) %>%
         summarise(AUC = sum(calc_auc, na.rm = TRUE))
       return(a_theoph)
     }
     
-    # Call the trapezoid function
-    trapezoid(a_Theoph)
+    # Call the trapezoid function and convert to data frame
+    auc_data <- as.data.frame(trapezoid(selected_subject_data()))
+    
+    # Display the result in DataTable
+    datatable(auc_data)
   })
   
   # Task 3: AUC Visualization
   output$auc_visualization <- renderPlot({
-    a_Theoph %>%
-      mutate(conc2 = lag(conc),
-             time2 = lag(Time)) %>% 
-      mutate(chg_con = ifelse(!is.na(conc) & !is.na(conc2), conc - conc2, conc)) %>%
-      filter(!is.na(chg_con)) %>% 
-      ggplot(aes(x = Time, y = chg_con, color = Subject)) + 
-      geom_point() + geom_line() + 
-      labs(x = "Time (hr)", y = "Change in Concentration (mg/L)")
+    if (input$show_all_subjects) {
+      ggplot(a_Theoph, aes(x = Time, y = conc, color = factor(Subject))) +
+        geom_line() +
+        labs(title = "AUC Visualization", x = "Time (hr)", y = "Concentration (mg/L)") +
+        scale_color_discrete(name = "Subject", limits = unique(a_Theoph$Subject))
+    } else {
+      ggplot(selected_subject_data(), aes(x = Time, y = conc, color = factor(Subject))) +
+        geom_line() +
+        labs(title = "AUC Visualization", x = "Time (hr)", y = "Concentration (mg/L)") +
+        scale_color_discrete(name = "Subject", limits = unique(selected_subject_data()$Subject))
+    }
   })
   
   # Task 4: Dose Levels Comparison
@@ -137,21 +138,50 @@ server <- function(input, output) {
     summary(model1)
   })
   
-  # Task 5: Additional Analysis
-  output$additional_analysis <- renderPrint({
-    # Your additional analysis or code results here
-    a_theoph <- a_Theoph %>%
+  # Task 5: Descriptive Statistics Summary Table
+  output$descriptive_stats <- renderDT({
+    descriptive_stats <- selected_subject_data() %>%
+      select(Age, conc, Time) %>%
+      summarise_all(list(mean = mean, sd = sd, median = median, min = min, max = max)) %>%
+      pivot_longer(cols = everything()) %>%
+      filter(!is.na(value)) %>%
+      rename("Variable" = name)
+    datatable(descriptive_stats, options = list(dom = 't'))
+  })
+  
+  # Task 6: Boxplot of Concentrations Over Time by Subject
+  output$boxplot <- renderPlot({
+    ggplot(a_Theoph, aes(x = Time, y = conc, color = Subject)) +
+      geom_boxplot() +
+      labs(x = "Time (hr)", y = "Concentration (mg/L)")
+  })
+  
+  # Task 7: Correlation Heatmap
+  output$correlation_heatmap <- renderPlot({
+    correlation_matrix <- cor(a_Theoph %>% select(Age, Dose, Time, conc), use = "complete.obs")
+    corrplot(correlation_matrix, method = "color", type = "upper", addCoef.col = "black")
+  })
+  
+  # Task 8: Histogram of Age Distribution
+  output$age_histogram <- renderPlot({
+    ggplot(a_Theoph, aes(x = Age)) +
+      geom_histogram(binwidth = 5, fill = "blue", color = "black", alpha = 0.7) +
+      labs(x = "Age", y = "Frequency")
+  })
+  
+  # Task 9: Scatter Plot Matrix
+  output$scatter_plot_matrix <- renderPlot({
+    pairs(a_Theoph %>% select(Age, Dose, Time, conc))
+  })
+  
+  # Task 10: Maximum Concentration Summary Table
+  output$max_conc_summary <- renderDT({
+    max_conc_summary <- a_Theoph %>%
       group_by(Subject) %>%
-      mutate(conc2 = lag(conc),
-             time2 = lag(Time)) %>%
-      mutate(calc_auc = ifelse(!is.na(conc) & !is.na(conc2) & !is.na(Time) & !is.na(time2),
-                               ((conc + conc2) / 2) * (Time - time2), NA_integer_)) %>% 
-      summarise(AUC = sum(calc_auc, na.rm = TRUE))
-    print(a_theoph)
+      summarise(Max_Concentration = max(conc))
+    datatable(max_conc_summary, options = list(dom = 't'))
   })
 }
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
-
